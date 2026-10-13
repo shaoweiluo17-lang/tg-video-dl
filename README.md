@@ -52,9 +52,16 @@ python3 -m venv .venv
 
 | 触发 | 做什么 |
 |---|---|
-| 推 `main` / 开 PR | 跑测试 → 构建 `.fpk`，产物放 Actions 的 **Artifacts**（可直接下载试用） |
+| 推 `main` / 开 PR | **密钥扫描** + 跑测试 → 构建 `.fpk`，产物放 Actions 的 **Artifacts**（可直接下载试用） |
 | 推 `v*` tag | 额外创建 **Release**，把 `tg-video-dl-<版本>.fpk` + `SHA256SUMS.txt` 挂上去 |
 | Actions 页面手动 Run | 同上，不建 Release |
+
+**密钥/隐私扫描**（待发布文件 + 全历史 + 产物包内文本）任何命中都会让整条流水线失败，挡住 Artifacts 与 Release：
+
+```bash
+python3 scripts/secret_scan.py                                   # 本地同款自查
+python3 scripts/secret_scan.py --artifact deploy/fpk/tg-video-dl-*.fpk
+```
 
 发布一个新版本（三处版本号必须同改，构建脚本与 workflow 都会校验）：
 

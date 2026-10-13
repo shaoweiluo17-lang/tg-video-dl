@@ -1,8 +1,8 @@
 name: build-fpk
 
-# 什么时候自动打 fpk：
-#   - 推 tag（v0.4.5 形式）：打测试 + 打 fpk + 自动创建 Release 并附上 .fpk
-#   - 推 main / 开 PR：打测试 + 打 fpk，产物留在 Actions Artifacts（方便下载测试）
+# 什么时候自动跑：
+#   - 推 tag（v0.4.5 形式）：密钥扫描 + 回归测试 + 打 fpk + 自动创建 Release 并附上 .fpk
+#   - 推 main / 开 PR：密钥扫描 + 回归测试 + 打 fpk，产物留在 Actions Artifacts（方便下载测试）
 #   - 也可以到 Actions 页面手动 Run workflow
 on:
   push:
@@ -24,6 +24,19 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
+  # 密钥/隐私扫描：待发布文件 + 当前分支全历史。任何命中直接失败，挡住 artifacts 与 Release。
+  # 口径见 scripts/secret_scan.py 与 changes/CHANGES-项目上传GitHub与Gitea冲突.md
+  secret-scan:
+    name: 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 历史扫描必须拿全历史（默认浅克隆只有 1 个提交）
+
+      - name: 扫描待发布文件 + 全历史
+        run: python3 scripts/secret_scan.py
+
   test:
     name: 回归测试
     runs-on: ubuntu-latest
@@ -59,7 +72,7 @@ jobs:
 
   build-fpk:
     name: 构建 .fpk
-    needs: test
+    needs: [secret-scan, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +108,10 @@ jobs:
       # 产物内无 __pycache__、产物内含 bin/xray
       - name: 构建 .fpk
         run: bash scripts/build_fpk.sh
+
+      # 包内文本成员再扫一遍（bin/ 下的 xray 与 geo 数据是二进制，自动跳过）
+      - name: 扫描产物（包内文本成员）
+        run: python3 scripts/secret_scan.py --no-history --artifact deploy/fpk/tg-video-dl-*.fpk
 
       - name: 生成校验和
         run: |
