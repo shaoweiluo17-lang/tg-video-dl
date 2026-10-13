@@ -1,0 +1,123 @@
+name: build-fpk
+
+# 什么时候自动打 fpk：
+#   - 推 tag（v0.4.5 形式）：打测试 + 打 fpk + 自动创建 Release 并附上 .fpk
+#   - 推 main / 开 PR：打测试 + 打 fpk，产物留在 Actions Artifacts（方便下载测试）
+#   - 也可以到 Actions 页面手动 Run workflow
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 打 tag 时要用 GITHUB_TOKEN 创建 Release，所以需要 contents: write
+permissions:
+  contents: write
+
+env:
+  # 官方打包工具（https://developer.fnnas.com/docs/cli/fnpack），x86_64 Linux 版
+  # 固定版本 + 固定 SHA-256：上游换二进制会直接构建失败，而不是悄悄打进包里
+  FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+  FNPACK_SHA256: 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    name: 回归测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r deploy/fpk/app/server/requirements.txt
+          pip install pytest pytest-timeout
+
+      - name: pytest
+        run: pytest -q
+
+  build-fpk:
+    name: 构建 .fpk
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # 版本号分散在 manifest / server/__init__.py / pyproject.toml 三处，
+      # 曾经出现「包是新的、面板显示旧版本」的错位，这里把 tag 也一并卡住。
+      - name: 校验 tag 与 manifest 版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          MANIFEST="$(grep -E '^version=' deploy/fpk/manifest | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+          echo "tag=$TAG  manifest=$MANIFEST"
+          if [ "$TAG" != "$MANIFEST" ]; then
+            echo "::error::tag v$TAG 与 deploy/fpk/manifest 的 version=$MANIFEST 不一致，请先统一三处版本号"
+            exit 1
+          fi
+
+      - name: 安装官方 fnpack（校验 SHA-256）
+        run: |
+          curl -fsSL -o /tmp/fnpack "$FNPACK_URL"
+          echo "$FNPACK_SHA256  /tmp/fnpack" | sha256sum -c -
+          sudo install -m 0755 /tmp/fnpack /usr/local/bin/fnpack
+          fnpack --help | sed -n '2,3p'
+
+      - name: 拉取 xray 二进制（37MB，不入库）
+        run: python3 scripts/fetch_xray.py
+
+      # 脚本自身会校验：版本号三处一致、无机密配置混入、xray 可执行、
+      # 产物内无 __pycache__、产物内含 bin/xray
+      - name: 构建 .fpk
+        run: bash scripts/build_fpk.sh
+
+      - name: 生成校验和
+        run: |
+          cd deploy/fpk
+          sha256sum tg-video-dl-*.fpk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 上传产物（Artifacts）
+        uses: actions/upload-artifact@v4
+        with:
+          name: tg-video-dl-fpk-${{ github.ref_name }}
+          path: |
+            deploy/fpk/tg-video-dl-*.fpk
+            deploy/fpk/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 打 tag 时创建 Release 并附上 .fpk
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            deploy/fpk/tg-video-dl-*.fpk
+            deploy/fpk/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            飞牛桌面 → **应用中心** → 右上角 **手动安装** → 选下面的 `.fpk`（同版本号会被视为假升级，升级请用新版本号）。
+
+            首次启动会联网装 Python 依赖，1～3 分钟属正常。
+
+            ## 使用前必须自备
+
+            - Telegram `api_id` / `api_hash`（到 https://my.telegram.org 自己申请）
+            - 一个 v2ray 节点（vless / vmess / trojan / ss 分享链接）
+
+            包内**不含**任何账号凭据、会话或节点；上手步骤见
+            [`docs/使用说明-接收方版.md`](docs/使用说明-接收方版.md)。

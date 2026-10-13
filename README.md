@@ -1,5 +1,7 @@
 # tg-video-dl — TG 视频 / 文档下载器
 
+[![build-fpk](https://github.com/shaoweiluo17-lang/tg-video-dl/actions/workflows/build-fpk.yml/badge.svg)](https://github.com/shaoweiluo17-lang/tg-video-dl/actions/workflows/build-fpk.yml)
+
 自己发现内容 → 转发到 Telegram **收藏夹** → 自动下载到 NAS。
 
 飞牛 fnOS 应用（fpk · 统一网关）· telethon 用户号 · 内置 xray 客户端
@@ -42,7 +44,26 @@ python3 -m venv .venv
 .venv/bin/pytest -q          # 369 个用例（含登录态轮换、去重、看门狗等回归用例）
 ```
 
-打包：`scripts/build_fpk.sh`（会先由 `scripts/fetch_xray.py` 拉取 xray 二进制）。
+打包：`scripts/build_fpk.sh`（会先由 `scripts/fetch_xray.py` 拉取 xray 二进制；需要官方 `fnpack`）。
+
+## 自动构建（GitHub Actions）
+
+`.github/workflows/build-fpk.yml`：
+
+| 触发 | 做什么 |
+|---|---|
+| 推 `main` / 开 PR | 跑测试 → 构建 `.fpk`，产物放 Actions 的 **Artifacts**（可直接下载试用） |
+| 推 `v*` tag | 额外创建 **Release**，把 `tg-video-dl-<版本>.fpk` + `SHA256SUMS.txt` 挂上去 |
+| Actions 页面手动 Run | 同上，不建 Release |
+
+发布一个新版本（三处版本号必须同改，构建脚本与 workflow 都会校验）：
+
+```bash
+# deploy/fpk/manifest · deploy/fpk/app/server/__init__.py · pyproject.toml
+git commit -am "release: v0.4.6"
+git tag v0.4.6
+git push origin main --tags     # tag 与 manifest 不一致会被 workflow 直接拒绝
+```
 
 ## 免责声明
 
