@@ -293,6 +293,17 @@ class DownloadQueue:
         rec = self.db.get(task.id)
         attempts = (rec.attempts if rec else 0)
 
+        if getattr(exc, "permanent", False):
+            # 「重试也没用」的失败（如文件引用过期且刷新后仍不可下载）：直接判失败，
+            # 不再白等 3 次指数退避 —— 那只会让面板晚 70 秒才显示真实原因。
+            self.db.mark_failed(task.id, f"{exc.__class__.__name__}: {exc}")
+            log.error("任务 %s 不可重试的失败：%s", task.id, exc)
+            await self._emit({
+                "type": "task_failed", "task_id": task.id,
+                "error": f"{exc.__class__.__name__}: {exc}"[:300],
+            })
+            return
+
         if flood is not None:
             # 限流：不计入失败次数，设全局闸门后把任务放回队列
             wait = min(flood, FLOOD_CAP)

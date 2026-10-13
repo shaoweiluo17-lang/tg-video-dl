@@ -34,6 +34,42 @@ from .paths import (
 
 log = logging.getLogger("tgvdl.download")
 
+# ---- 文件引用过期（FileReferenceExpired）------------------------------
+# Telegram 的 file_reference 是**短时效凭据**：消息到达时给的那把引用，过一段时间
+# 就会失效。真机现象（2026-10-13 00:19，任务 41 / msg=2079）：
+#   The file reference has expired and is no longer valid or it belongs to
+#   self-destructing media and cannot be resent (caused by GetFileRequest)
+# ⚠️ 这种情况**重试毫无意义**：手里那把引用已经是废的，只有拿 message_id 重新向
+# TG 要一份消息对象，才能拿到新引用。而旧实现 `_refetch()` 优先返回内存缓存里的
+# 老消息对象——里面装的正是那把过期引用，于是 3 次重试全撞在同一堵墙上。
+_FILE_REF_HINTS = (
+    "file reference has expired",
+    "filereferenceexpired",
+    "file_reference_expired",
+    "file reference invalid",
+    "filereferenceinvalid",
+    "file_reference_invalid",
+)
+
+
+def is_file_reference_expired(exc: BaseException) -> bool:
+    """是否为「文件引用过期/失效」（按异常类名 + 文案双保险，兼容被包装过的异常）。"""
+    if "filereference" in type(exc).__name__.lower():
+        return True
+    text = str(exc).lower()
+    return any(hint in text for hint in _FILE_REF_HINTS)
+
+
+class DownloadGiveUp(RuntimeError):
+    """重试也没用的失败（例如刷新引用后仍不可下载）。
+
+    `permanent = True` 让队列**直接判失败**，不再白等 3 次指数退避
+    （见 `queue._handle_failure`）。
+    """
+
+    permanent = True
+
+
 # 常见视频容器后缀（document 型媒体靠它判定）
 VIDEO_EXTS = {
     ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
@@ -618,11 +654,8 @@ class MediaDownloader:
 
         pump_task = asyncio.create_task(pump()) if (reporter is not None and want_progress) else None
         try:
-            written = await stream_to_file(
-                client, message, target,
-                on_progress=progress,
-                resume=bool(beh.get("resume", True)),
-                total=int(task.size or media.size or 0),
+            written = await self._download_with_refresh(
+                client, task, message, target, progress, beh, media,
             )
         except BaseException as exc:
             if pump_task:
@@ -657,28 +690,101 @@ class MediaDownloader:
             except Exception:
                 log.debug("发送完成通知出错（忽略）", exc_info=True)
 
-    async def _refetch(self, client: Any, task: Any) -> Any:
+    async def _download_with_refresh(
+        self,
+        client: Any,
+        task: Any,
+        message: Any,
+        target: Path,
+        on_progress: Callable[[int, int], None] | None,
+        beh: dict[str, Any],
+        media: Any,
+    ) -> int:
+        """下载一次；若因**文件引用过期**失败，刷新消息换新引用后重试一次。
+
+        为什么必须在任务内部立刻重试（而不是丢给队列的 3 次重试）：
+        队列重试会再走一遍 `_refetch()`，而它优先命中**内存缓存里的老消息对象**
+        —— 那把过期引用原封不动，于是 3 次重试全是同一个错（真机 2026-10-13 实测）。
+        这里改为：过期就**强制走网络**重新拉消息（`force_network=True`），
+        拿到新引用后原地重下（还能续传、不浪费已下载的 .part）。
+
+        私密/自毁媒体的引用过期后确实无法重下，此时抛 `DownloadGiveUp`
+        （`permanent=True`），让队列立刻判失败并给出可操作提示，不再空转 3 次。
+        """
+        kwargs: dict[str, Any] = {
+            "on_progress": on_progress,
+            "resume": bool(beh.get("resume", True)),
+            "total": int(task.size or media.size or 0),
+        }
+        try:
+            return await stream_to_file(client, message, target, **kwargs)
+        except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError) or not is_file_reference_expired(exc):
+                raise
+            log.warning(
+                "文件引用已过期（msg=%s），重新拉取消息换取新引用后重试", task.message_id
+            )
+
+        try:
+            fresh = await self._refetch(client, task, force_network=True)
+        except Exception as refetch_exc:
+            raise DownloadGiveUp(
+                f"文件引用已过期，且无法重新获取消息（{refetch_exc}）；"
+                "自毁/私密媒体的引用过期后无法重下，请重新转发该消息"
+            ) from refetch_exc
+
+        try:
+            return await stream_to_file(client, fresh, target, **kwargs)
+        except BaseException as second:
+            if isinstance(second, asyncio.CancelledError):
+                raise
+            if is_file_reference_expired(second):
+                raise DownloadGiveUp(
+                    "文件引用过期，换新引用后仍不可下载（消息可能已失效或为自毁媒体）；"
+                    "请重新转发该消息"
+                ) from second
+            raise
+
+    async def _refetch(self, client: Any, task: Any, *, force_network: bool = False) -> Any:
         """取得可下载的消息对象。
 
-        优先用**内存缓存**（消息到达时就存了完整对象，无需重新拉取）；
-        未命中才走网络。这样可规避 telethon 解析新对象失败导致的下载失败
-        （真机实测：两个频道视频因 Constructor ID 不认识而失败 3 次）。
+        - 默认：优先用**内存缓存**（消息到达时就存了完整对象），未命中才走网络。
+          这样可规避 telethon 解析新对象失败导致的下载失败
+          （真机实测：两个频道视频因 Constructor ID 不认识而失败 3 次）。
+        - `force_network=True`：**先走网络**重新拉取。文件引用过期时必须这样
+          —— 缓存里那把引用已经失效。网络路径失败/查不到时退回缓存，
+          保证「未知构造器」这个老问题仍有兜底。
         """
         cached = get_cached_message(task.chat_id, task.message_id)
-        if cached is not None:
+        if cached is not None and not force_network:
             log.debug("命中消息缓存：msg=%s", task.message_id)
             return cached
 
         try:
             msg = await client.get_messages("me", ids=task.message_id)
         except Exception as exc:
+            if cached is not None:
+                log.warning(
+                    "重新获取消息失败（%s），退回缓存对象：msg=%s", exc, task.message_id
+                )
+                return cached
             raise RuntimeError(
                 f"重新获取消息失败：{exc}。"
                 "（常见原因：Telegram 下发了当前 telethon 版本不认识的对象。"
                 "可尝试重新转发该视频——新转发会被缓存，无需重新拉取。）"
             ) from exc
         if msg is None:
+            if cached is not None:
+                log.warning("远端已查不到该消息（msg=%s），退回缓存对象", task.message_id)
+                return cached
             raise RuntimeError(f"消息不存在（msg={task.message_id}），可能已被删除")
+
+        if force_network and cached is not None:
+            # 用刚拿到的新对象覆盖缓存，避免后续重试又摸到旧引用
+            try:
+                cache_message(msg, task.chat_id)
+            except Exception:
+                log.debug("刷新消息缓存失败（忽略）", exc_info=True)
         return msg
 
 
@@ -953,6 +1059,7 @@ PUMP_DRAIN_TIMEOUT = float(os.environ.get("TGV_PUMP_DRAIN_TIMEOUT", "15"))
 
 __all__ = [
     "DEFAULT_DOC_PATH_TEMPLATE",
+    "DownloadGiveUp",
     "IGNORED_EXTS",
     "MESSAGE_CACHE_SIZE",
     "MSG_CACHE_PERSIST_MAX",
@@ -970,6 +1077,7 @@ __all__ = [
     "ensure_dir_authorized",
     "get_cached_message",
     "identify_media",
+    "is_file_reference_expired",
     "load_message_cache",
     "message_cache_path",
     "notify_policy",

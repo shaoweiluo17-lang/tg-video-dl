@@ -1,5 +1,5 @@
 appname=tg-video-dl
-version=0.4.5
+version=0.4.6
 display_name=TG 视频下载
 desc=Telegram 收藏夹转发即下载：telethon 用户号监听收藏夹，内置 xray 出网，落盘到 NAS（统一网关 + WebSocket）
 source=thirdparty

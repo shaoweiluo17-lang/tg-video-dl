@@ -1,6 +1,6 @@
 [project]
 name = "tg-video-dl"
-version = "0.4.5"
+version = "0.4.6"
 description = "Telegram 收藏夹转发即下载（fnOS fpk 应用）"
 requires-python = ">=3.11"
 

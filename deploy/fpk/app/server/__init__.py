@@ -15,4 +15,4 @@
 - `main.py`          FastAPI 入口 + 统一网关 + 任务/日志/目录预检 API
 """
 
-__version__ = "0.4.5"
+__version__ = "0.4.6"

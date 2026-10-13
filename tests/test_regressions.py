@@ -1631,3 +1631,212 @@ class TestReloginRotation:
 
         mgr = TgClientManager(api_id="1", api_hash="h", proxy_url=None)
         assert mgr._has_stored_authorization() is False
+
+
+class TestFileReferenceExpiry:
+    """文件引用过期（FileReferenceExpired）：真机 2026-10-13 00:19 任务 41 / msg=2079。
+
+    现象：下载一开始就报
+      The file reference has expired and is no longer valid or it belongs to
+      self-destructing media and cannot be resent (caused by GetFileRequest)
+    连报 3 次，任务失败。
+
+    根因：Telegram 的 `file_reference` 是**短时效凭据**，重试同一把引用毫无意义；
+    而旧实现 `_refetch()` 优先返回**内存缓存里的老消息对象**——里面装的正是那把
+    废引用，于是队列的 3 次重试全撞在同一堵墙上（连错误文案都一模一样）。
+
+    修复：过期时**强制走网络**重新拉消息换新引用，然后原地重下（.part 续传不浪费）；
+    换不到、或换到也仍过期（自毁/已失效媒体）→ 抛 `DownloadGiveUp`（permanent），
+    队列立刻判失败并给出「重新转发该消息」的可操作提示。
+    """
+
+    MESSAGE_ID = 2079
+    TASK_ID = 41
+
+    def _task(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=self.TASK_ID, chat_id="saved", message_id=self.MESSAGE_ID,
+            size=58 * 1024 * 1024, target_path=None,
+        )
+
+    def _msg(self, tag: str) -> SimpleNamespace:
+        return SimpleNamespace(id=self.MESSAGE_ID, chat_id="saved", tag=tag)
+
+    @staticmethod
+    def _manager() -> object:
+        from server.downloader import MediaDownloader
+
+        return MediaDownloader(tg_manager=SimpleNamespace(), config=None)  # type: ignore[arg-type]
+
+    def test_classifier_matches_class_name_and_real_text(self) -> None:
+        from server.downloader import is_file_reference_expired
+
+        class FileReferenceExpiredError(Exception):
+            ...
+
+        assert is_file_reference_expired(FileReferenceExpiredError("boom")) is True
+        # 真机日志就是这段文案：即使被包装成 RuntimeError 也要认得出来
+        assert is_file_reference_expired(RuntimeError(
+            "The file reference has expired and is no longer valid or it belongs to "
+            "self-destructing media and cannot be resent (caused by GetFileRequest)"
+        )) is True
+        assert is_file_reference_expired(RuntimeError("下载停滞：30s 内无新数据")) is False
+
+    def test_force_network_ignores_stale_cache_and_refreshes_it(self) -> None:
+        from server import downloader as dl
+
+        mid = self.MESSAGE_ID
+        stale, fresh = self._msg("stale"), self._msg("fresh")
+        dl.cache_message(stale, "saved")
+
+        class FakeClient:
+            async def get_messages(self, peer: str, ids: int) -> object:
+                assert peer == "me" and ids == mid
+                return fresh
+
+        try:
+            got = asyncio.run(
+                self._manager()._refetch(FakeClient(), self._task(), force_network=True)
+            )
+            assert got is fresh, "强制网络时绝不能再用缓存里的旧引用"
+            assert dl.get_cached_message("saved", mid) is fresh, "缓存要被新对象覆盖"
+        finally:
+            dl.reset_message_cache(drop_disk=True)
+
+    def test_network_failure_falls_back_to_cache(self) -> None:
+        """保住老兜底：telethon 不认识的新构造器拉不回来时，仍然用缓存对象。"""
+        from server import downloader as dl
+
+        stale = self._msg("stale")
+        dl.cache_message(stale, "saved")
+
+        class BoomClient:
+            async def get_messages(self, peer: str, ids: int) -> object:
+                raise RuntimeError("Cannot parse constructor 0xdeadbeef")
+
+        try:
+            got = asyncio.run(
+                self._manager()._refetch(BoomClient(), self._task(), force_network=True)
+            )
+            assert got is stale
+        finally:
+            dl.reset_message_cache(drop_disk=True)
+
+    def test_expired_reference_refetches_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from server import downloader as dl
+
+        class FileReferenceExpiredError(Exception):
+            ...
+
+        fresh = self._msg("fresh")
+        seen: list[object] = []
+
+        async def fake_stream(client, message, target, **kwargs):  # noqa: ANN001, ANN202
+            seen.append(message)
+            if len(seen) == 1:
+                raise FileReferenceExpiredError(
+                    "The file reference has expired and is no longer valid or it belongs to "
+                    "self-destructing media and cannot be resent (caused by GetFileRequest)"
+                )
+            return 12345
+
+        class FakeClient:
+            async def get_messages(self, peer: str, ids: int) -> object:
+                return fresh
+
+        monkeypatch.setattr(dl, "stream_to_file", fake_stream)
+        monkeypatch.setattr(dl, "get_cached_message", lambda *_a: None)
+
+        n = asyncio.run(self._manager()._download_with_refresh(
+            FakeClient(), self._task(), self._msg("stale"), tmp_path / "video_2079.mp4",
+            None, {"resume": True}, SimpleNamespace(size=1000),
+        ))
+        assert n == 12345
+        assert len(seen) == 2
+        assert seen[1] is fresh, "第二次必须用刷新后的消息对象（新 file_reference）"
+
+    def test_second_expiry_gives_up_permanently(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from server import downloader as dl
+
+        class FileReferenceExpiredError(Exception):
+            ...
+
+        fresh = self._msg("fresh")
+
+        async def always_expired(client, message, target, **kwargs):  # noqa: ANN001, ANN202
+            raise FileReferenceExpiredError("file reference has expired")
+
+        class FakeClient:
+            async def get_messages(self, peer: str, ids: int) -> object:
+                return fresh
+
+        monkeypatch.setattr(dl, "stream_to_file", always_expired)
+        monkeypatch.setattr(dl, "get_cached_message", lambda *_a: None)
+
+        with pytest.raises(dl.DownloadGiveUp) as ei:
+            asyncio.run(self._manager()._download_with_refresh(
+                FakeClient(), self._task(), self._msg("stale"), tmp_path / "x.mp4",
+                None, {}, SimpleNamespace(size=1),
+            ))
+        assert getattr(ei.value, "permanent", False) is True
+        assert "重新转发" in str(ei.value)
+
+    def test_unfetchable_message_gives_up_too(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """连消息都拉不回来（已删除）→ 同样 permanent，不空转 3 次。"""
+        from server import downloader as dl
+
+        class FileReferenceExpiredError(Exception):
+            ...
+
+        async def expired(client, message, target, **kwargs):  # noqa: ANN001, ANN202
+            raise FileReferenceExpiredError("file reference has expired")
+
+        class DeadClient:
+            async def get_messages(self, peer: str, ids: int) -> object:
+                return None
+
+        monkeypatch.setattr(dl, "stream_to_file", expired)
+        monkeypatch.setattr(dl, "get_cached_message", lambda *_a: None)
+
+        with pytest.raises(dl.DownloadGiveUp) as ei:
+            asyncio.run(self._manager()._download_with_refresh(
+                DeadClient(), self._task(), self._msg("stale"), tmp_path / "y.mp4",
+                None, {}, SimpleNamespace(size=1),
+            ))
+        assert getattr(ei.value, "permanent", False) is True
+
+    def test_queue_fails_fast_on_permanent_error(self) -> None:
+        """permanent 失败不再等 3 次指数退避（否则面板 70 秒后才看到真实原因）。"""
+        from server.downloader import DownloadGiveUp
+        from server.queue import DownloadQueue
+
+        class FakeDB:
+            def __init__(self) -> None:
+                self.failed: list[tuple[int, str]] = []
+                self.retried: list[int] = []
+
+            def get(self, task_id: int) -> object:
+                return SimpleNamespace(attempts=0)
+
+            def mark_failed(self, task_id: int, why: str) -> None:
+                self.failed.append((task_id, why))
+
+            def reset_for_retry(self, task_id: int) -> None:
+                self.retried.append(task_id)
+
+        q = DownloadQueue.__new__(DownloadQueue)
+        q.db = FakeDB()  # type: ignore[assignment]
+        q._on_event = None
+        q._sleeping_until = 0.0
+
+        asyncio.run(
+            q._handle_failure(SimpleNamespace(id=self.TASK_ID), DownloadGiveUp("引用过期"))
+        )
+
+        assert q.db.failed and not q.db.retried, "permanent 失败必须直接判失败"
