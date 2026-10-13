@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TG 视频下载</title>
+<style>
+  /* 主题：浅色默认，深色跟随系统 + 手动三态（复用 fn-smart-money 主题变量） */
+  :root{
+    color-scheme:light;
+    --bg:#f4f5f8; --bg2:#ffffff; --bg3:#eef1f4;
+    --line:#e3e7ec; --line2:#d3dae1;
+    --txt:#1a2230; --txt2:#56606f; --txt3:#8a93a2;
+    --accent:#2f7cf0; --accent2:#5b9cff;
+    --ok:#12a37b; --bad:#e03a42; --warn:#cf8f16;
+    --shadow:0 8px 24px rgba(15,30,60,.12);
+    --sel:rgba(47,124,240,.16);
+    --r:12px;
+    --font:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+    --mono:"SF Mono","Cascadia Code",Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#0e1116; --bg2:#141922; --bg3:#1a2028;
+      --line:#232a35; --line2:#2c3542;
+      --txt:#e8ecf1; --txt2:#9aa5b1; --txt3:#6b7686;
+      --accent:#4a9eff; --accent2:#7cc0ff;
+      --ok:#16c784; --bad:#ea3943; --warn:#f5a623;
+      --shadow:0 8px 24px rgba(0,0,0,.35);
+      --sel:rgba(74,158,255,.18);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#0e1116; --bg2:#141922; --bg3:#1a2028;
+    --line:#232a35; --line2:#2c3542;
+    --txt:#e8ecf1; --txt2:#9aa5b1; --txt3:#6b7686;
+    --accent:#4a9eff; --accent2:#7cc0ff;
+    --ok:#16c784; --bad:#ea3943; --warn:#f5a623;
+    --shadow:0 8px 24px rgba(0,0,0,.35);
+    --sel:rgba(74,158,255,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:var(--font);font-size:14px;
+    min-height:100vh;display:flex;flex-direction:column}
+  ::selection{background:color-mix(in srgb,var(--accent) 30%,transparent)}
+
+  header{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);background:var(--bg2);
+    display:flex;align-items:center;gap:12px;padding:0 18px;position:sticky;top:0;z-index:10}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+  .brand .dot{width:9px;height:9px;border-radius:3px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  .spacer{flex:1}
+  .pill{font-size:12px;display:inline-flex;align-items:center;gap:6px;border-radius:20px;
+    padding:3px 10px;border:1px solid var(--line);background:var(--bg3);color:var(--txt2)}
+  .pill .led{width:7px;height:7px;border-radius:50%;background:var(--txt3)}
+  .pill.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);
+    background:color-mix(in srgb,var(--ok) 8%,transparent)}
+  .pill.on .led{background:var(--ok)}
+  .pill.err{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);
+    background:color-mix(in srgb,var(--bad) 8%,transparent)}
+  .pill.err .led{background:var(--bad)}
+  .theme{display:flex;gap:2px;border:1px solid var(--line);border-radius:8px;padding:2px}
+  .theme button{border:0;background:transparent;color:var(--txt3);width:30px;height:26px;
+    border-radius:6px;cursor:pointer;font-size:13px}
+  .theme button.on{background:var(--sel);color:var(--accent2)}
+
+  .hd{display:flex;align-items:center;gap:10px;cursor:pointer}
+  .hd h2{flex:0 0 auto}
+  .hd .one{flex:1;font-size:13px;color:var(--txt2);min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .hd .chev{color:var(--txt3);transition:transform .2s;font-size:12px}
+  .hd.open .chev{transform:rotate(180deg)}
+  .collapse-body{display:none}
+  .hd.open + .collapse-body{display:block;margin-top:10px}
+
+  /* ---------- 导航栏 ---------- */
+  .navbar{position:sticky;top:0;z-index:20;display:flex;gap:4px;padding:8px 18px;
+    background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  .nb{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:8px;
+    color:var(--txt2);text-decoration:none;font-size:13px;cursor:pointer;border:1px solid transparent;
+    transition:.15s}
+  .nb:hover{color:var(--txt);background:var(--bg3)}
+  .nb .d{width:7px;height:7px;border-radius:50%;background:var(--txt3)}
+  .nb.active{color:var(--accent2);background:var(--sel);border-color:color-mix(in srgb,var(--accent) 26%,transparent)}
+  .nb.active .d{background:var(--accent)}
+  .nb-badge{font-style:normal;font-size:11px;background:var(--accent);color:#fff;
+    border-radius:10px;padding:0 6px;min-width:16px;text-align:center;line-height:16px}
+  .nb-badge.warn{background:var(--bad)}
+  html{scroll-behavior:smooth}
+  .card{scroll-margin-top:62px}
+
+  .wrap{flex:1;max-width:1000px;width:100%;margin:0 auto;padding:22px 18px 60px;display:flex;
+    flex-direction:column;gap:18px}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);
+    padding:20px;box-shadow:var(--shadow)}
+  .card h2{font-size:15px;display:flex;align-items:center;gap:9px;margin-bottom:4px}
+  .card h2 .idx{width:22px;height:22px;border-radius:7px;background:var(--sel);color:var(--accent2);
+    font-size:12px;display:grid;place-items:center;font-weight:600}
+  .card .hint{color:var(--txt3);font-size:12.5px;margin:8px 0 16px;line-height:1.65}
+  .card .hint code{font-family:var(--mono);background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:12px}
+  .card .hint a{color:var(--accent2)}
+
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .field label{font-size:13px;color:var(--txt2);display:flex;align-items:center;gap:7px}
+  .field label .req{color:var(--bad);font-size:12px}
+  .field label .set{color:var(--ok);font-size:11.5px;border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);
+    border-radius:20px;padding:0 7px}
+  input,select,textarea{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:9px;
+    background:var(--bg3);color:var(--txt);font-size:13.5px;outline:none;font-family:inherit}
+  textarea{font-family:var(--mono);font-size:12.5px;resize:vertical;min-height:70px;line-height:1.5}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);background:var(--bg2)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:180px}
+  .inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+  button{border:1px solid var(--line2);background:var(--bg3);color:var(--txt);
+    padding:9px 16px;border-radius:9px;cursor:pointer;font-size:13.5px;font-family:inherit;
+    display:inline-flex;align-items:center;gap:7px;transition:.15s}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover:not(:disabled){background:var(--accent2);border-color:var(--accent2);color:#fff}
+  button.ghost{background:transparent}
+  button.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+  button.danger:hover:not(:disabled){background:color-mix(in srgb,var(--bad) 10%,transparent);
+    border-color:var(--bad);color:var(--bad)}
+
+  .msg{margin-top:12px;padding:10px 13px;border-radius:9px;font-size:13px;line-height:1.6;display:none}
+  .msg.show{display:block}
+  .msg.ok{background:color-mix(in srgb,var(--ok) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--ok) 35%,transparent);color:var(--ok)}
+  .msg.err{background:color-mix(in srgb,var(--bad) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--bad) 35%,transparent);color:var(--bad)}
+  .msg.info{background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);color:var(--accent2)}
+  .msg.warn{background:color-mix(in srgb,var(--warn) 12%,transparent);
+    border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);color:var(--warn)}
+
+  .checks{display:flex;flex-direction:column;gap:7px;margin-top:12px}
+  .check{display:flex;gap:9px;font-size:13px;align-items:flex-start;line-height:1.55}
+  .check .ic{flex:0 0 auto;font-weight:700}
+  .check.y .ic{color:var(--ok)} .check.n .ic{color:var(--bad)}
+
+  .steps{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+  .step{flex:1;min-width:120px;border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--bg3)}
+  .step.on{border-color:var(--accent);background:var(--sel)}
+  .step.done{border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+  .step .n{font-size:11px;color:var(--txt3)}
+  .step .t{font-size:13px;margin-top:3px}
+  .step.done .n::after{content:" ✓";color:var(--ok)}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:13px;margin-top:6px}
+  .kv dt{color:var(--txt3)} .kv dd{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+  .note{border-left:3px solid var(--warn);background:color-mix(in srgb,var(--warn) 7%,transparent);
+    padding:11px 14px;border-radius:0 9px 9px 0;font-size:12.8px;line-height:1.7;color:var(--txt2)}
+  .note b{color:var(--txt)}
+  .hide{display:none!important}
+  footer{text-align:center;color:var(--txt3);font-size:12px;padding:0 0 26px}
+
+  /* ---------- 开关 ---------- */
+  .sw{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--txt2);cursor:pointer;
+    padding:7px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg3)}
+  .sw:hover{border-color:var(--accent)}
+  .sw input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+
+  /* ---------- 统计卡 ---------- */
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:6px}
+  @media (max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:var(--bg3);text-align:center}
+  .stat .n{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:11.5px;color:var(--txt3);margin-top:3px}
+  .stat.ok .n{color:var(--ok)} .stat.bad .n{color:var(--bad)}
+  .stat.run .n{color:var(--accent2)} .stat.pend .n{color:var(--warn)}
+
+  /* ---------- 任务列表 ---------- */
+  .tasks{display:flex;flex-direction:column;gap:9px;margin-top:14px}
+  .task{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:var(--bg3);
+    display:flex;flex-direction:column;gap:7px}
+  .task .top{display:flex;align-items:center;gap:9px;font-size:13.5px}
+  .task .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-weight:500}
+  .task .meta{font-size:12px;color:var(--txt3);display:flex;gap:12px;flex-wrap:wrap}
+  .task .meta code{font-family:var(--mono);font-size:11.5px;word-break:break-all}
+  .task .err{font-size:12px;color:var(--bad);word-break:break-word;line-height:1.5}
+  .bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+    transition:width .4s}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap}
+  .tag.done{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);
+    background:color-mix(in srgb,var(--ok) 10%,transparent)}
+  .tag.failed{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);
+    background:color-mix(in srgb,var(--bad) 10%,transparent)}
+  .tag.running{color:var(--accent2);border-color:color-mix(in srgb,var(--accent) 40%,transparent);
+    background:var(--sel)}
+  .tag.pending{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);
+    background:color-mix(in srgb,var(--warn) 10%,transparent)}
+  .tag.skipped{color:var(--txt3);border-color:var(--line)}
+  /* 媒体类型徽标：视频 / 文档（任务面板一眼看出这次下的是什么） */
+  .kind{font-size:11px;padding:2px 7px;border-radius:6px;white-space:nowrap;
+    color:var(--txt2);border:1px solid var(--line);background:color-mix(in srgb,var(--txt3) 12%,transparent)}
+  .kind.document{color:var(--accent2);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+  .empty{text-align:center;color:var(--txt3);font-size:13px;padding:26px 0}
+
+  .dirrep{margin-top:7px;font-size:12.5px;line-height:1.55}
+  .dirrep.ok{color:var(--ok)}
+  .dirrep.bad{color:var(--bad)}
+
+  /* ---------- 日志 ---------- */
+  .logview{font-family:var(--mono);font-size:11.5px;line-height:1.65;background:var(--bg3);
+    border:1px solid var(--line);border-radius:9px;padding:13px;max-height:420px;
+    overflow:auto;white-space:pre-wrap;word-break:break-all;color:var(--txt2)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>TG 视频下载 <small style="color:var(--txt3);font-weight:400">tg-video-dl</small></div>
+  <div class="spacer"></div>
+  <span class="pill" id="pillProxy"><span class="led"></span>代理</span>
+  <span class="pill" id="pillTg"><span class="led"></span>Telegram</span>
+  <div class="theme">
+    <button data-theme-set="light" title="浅色">☀</button>
+    <button data-theme-set="auto" title="跟随系统">◐</button>
+    <button data-theme-set="dark" title="深色">☾</button>
+  </div>
+</header>
+
+<nav class="navbar">
+  <a href="#sec-status" class="nb" data-sec="status"><span class="d"></span>状态</a>
+  <a href="#sec-tasks" class="nb" data-sec="tasks"><span class="d"></span>下载记录 <em id="nbTaskBadge" class="nb-badge hide">0</em></a>
+  <a href="#sec-proxy" class="nb" data-sec="proxy"><span class="d"></span>代理</a>
+  <a href="#sec-login" class="nb" data-sec="login"><span class="d"></span>登录</a>
+  <a href="#sec-settings" class="nb" data-sec="settings"><span class="d"></span>设置</a>
+  <a href="#sec-logs" class="nb" data-sec="logs"><span class="d"></span>日志</a>
+</nav>
+
+<div class="wrap">
+
+  <!-- 概览（折叠式：只保留一行摘要，明细点开再看） -->
+  <div class="card" id="sec-status">
+    <div class="hd" id="statusHd" role="button" title="点击展开/收起">
+      <h2><span class="idx">i</span>运行状态</h2>
+      <div class="one" id="statusOne">加载中…</div>
+      <span class="chev" id="statusChev">▾</span>
+    </div>
+    <div id="statusBody" class="collapse-body">
+      <div class="hint">本机<b>无法直连 Telegram</b>（已实测超时），必须先配好代理与账号，才能开始下载。</div>
+      <dl class="kv" id="statusKv"><dt>加载中…</dt><dd></dd></dl>
+    </div>
+    <div class="inline" style="margin-top:14px">
+      <button id="btnRefresh">刷新状态</button>
+      <button id="btnTestProxy">测试 Telegram 连通性</button>
+    </div>
+    <div class="msg" id="msgStatus"></div>
+  </div>
+
+  <div class="card" id="sec-proxy">
+    <h2><span class="idx">1</span>代理（v2ray 分享链接）</h2>
+    <div class="hint">
+      粘贴一条分享链接，应用会<b>自己启动内置 xray</b> 出网，不需要你在 NAS 上另装代理软件。<br>
+      支持 <code>vless://</code> <code>vmess://</code> <code>trojan://</code> <code>ss://</code>；
+      reality 与带 <code>fp=</code> 指纹的节点也能用（由 xray 处理）。
+    </div>
+    <div class="field">
+      <label>分享链接 <span class="req">*</span><span class="set hide" id="uriSet">已设置</span></label>
+      <textarea id="v2rayUri" placeholder="vless://uuid@host:443?security=reality&pbk=...&fp=chrome#节点名　（已设置时留空＝不修改）"></textarea>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>出网方式</label>
+        <select id="proxyNetwork">
+          <option value="v2ray">v2ray（内置 xray，推荐）</option>
+          <option value="direct">直连（仅当网络本身可达 TG）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>本机 SOCKS 端口</label>
+        <input id="socksPort" type="number" min="1024" max="65535" placeholder="10808">
+      </div>
+    </div>
+    <div class="inline">
+      <button id="btnValidate" class="ghost">仅校验链接</button>
+      <button id="btnSaveProxy" class="primary">保存并启动代理</button>
+    </div>
+    <div class="checks" id="proxyChecks"></div>
+    <div class="msg" id="msgProxy"></div>
+  </div>
+
+  <div class="card" id="sec-login">
+    <h2><span class="idx">2</span>Telegram 账号登录</h2>
+    <div class="hint">
+      下载必须走<b>用户号</b>（MTProto），因为 Bot API 的下载上限只有 <b>20MB</b>，而 TG 视频基本都超。<br>
+      在 <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> →
+      <b>API development tools</b> 免费申请 <code>api_id</code> 与 <code>api_hash</code>（几分钟出结果）。<br>
+      登录后 session 会<b>AES-GCM 加密</b>保存在应用私有目录（权限 600），不会写进日志、也不会下发到本页面。
+    </div>
+
+    <div class="steps">
+      <div class="step" id="step1"><div class="n">第一步</div><div class="t">填 api 凭据</div></div>
+      <div class="step" id="step2"><div class="n">第二步</div><div class="t">收验证码</div></div>
+      <div class="step" id="step3"><div class="n">第三步</div><div class="t">登录完成</div></div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>api_id <span class="set hide" id="apiIdSet">已设置</span></label>
+        <input id="apiId" placeholder="1234567（已设置时留空＝不修改）">
+      </div>
+      <div class="field">
+        <label>api_hash <span class="set hide" id="apiHashSet">已设置</span></label>
+        <input id="apiHash" placeholder="留空＝不修改">
+      </div>
+    </div>
+    <div class="field">
+      <label>手机号（带国际区号）</label>
+      <input id="phone" placeholder="+8613800138000">
+    </div>
+    <div class="inline">
+      <button id="btnSaveCreds" class="ghost">保存凭据</button>
+      <button id="btnSendCode" class="primary">发送验证码</button>
+    </div>
+
+    <div id="codeBox" class="hide" style="margin-top:16px">
+      <div class="field">
+        <label>验证码（Telegram 内收到的 5 位数字）</label>
+        <input id="code" placeholder="12345" autocomplete="one-time-code">
+      </div>
+      <div class="field hide" id="pwdField">
+        <label>两步验证密码（账号开了 2FA 时必填）</label>
+        <input id="password" type="password" placeholder="••••••••">
+      </div>
+      <div class="inline">
+        <button id="btnVerify" class="primary">提交验证码</button>
+        <button id="btnResend" class="ghost">重新发送</button>
+      </div>
+    </div>
+
+    <div class="inline" style="margin-top:14px">
+      <button id="btnLogout" class="danger">退出登录（清除 session）</button>
+    </div>
+    <div class="msg" id="msgTg"></div>
+  </div>
+
+  <div class="card" id="sec-settings">
+    <h2><span class="idx">3</span>下载设置</h2>
+    <div class="hint">
+      开启监听后，把想下载的<b>视频</b>或<b>电子书文档</b>（TXT/EPUB/PDF…）<b>转发到自己的收藏夹</b>（Saved Messages），应用即会自动落盘。
+      一期只监听收藏夹，不订阅任何群或频道（尽量降低账号风控风险）。
+    </div>
+    <div class="field">
+      <label>落盘目录（视频）</label>
+      <div class="inline" style="gap:8px">
+        <input id="downloadDir" placeholder="/vol1/1000/media/downloads/TG（默认应用私有目录）" style="flex:1">
+        <button id="btnCheckDir" class="ghost" style="white-space:nowrap">检查目录</button>
+      </div>
+      <div id="dirReport" class="dirrep hide"></div>
+      <div id="dirActions" class="note hide" style="margin-top:8px"></div>
+    </div>
+    <div class="field">
+      <label>文档落盘目录（TXT/EPUB/PDF…，留空＝与视频同目录）</label>
+      <div class="inline" style="gap:8px">
+        <input id="docDir" placeholder="/vol1/1000/media/books（必须是系统已授权目录）" style="flex:1">
+        <button id="btnCheckDocDir" class="ghost" style="white-space:nowrap">检查目录</button>
+      </div>
+      <div id="docDirReport" class="dirrep hide"></div>
+      <div id="docDirActions" class="note hide" style="margin-top:8px"></div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>路径模板（视频）</label>
+        <input id="pathTemplate" placeholder="{date}/{filename}">
+      </div>
+      <div class="field">
+        <label>文档路径模板</label>
+        <input id="docPathTemplate" placeholder="{filename}">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>文档后缀白名单（留空＝只下 .txt）</label>
+        <input id="docExts" placeholder=".txt,.epub,.pdf,.mobi,.azw3">
+      </div>
+      <div class="field">
+        <label>并发数（建议 1-2）</label>
+        <input id="maxConcurrent" type="number" min="1" max="5" placeholder="1">
+      </div>
+      <div class="field">
+        <label>磁盘最低剩余（GB）</label>
+        <input id="diskMinFree" type="number" min="0" placeholder="5">
+      </div>
+    </div>
+    <div class="note" style="margin-bottom:14px">
+      <b>路径模板可用字段：</b><code>{date}</code> 日期、<code>{filename}</code> 文件名、
+      <code>{ext}</code> 扩展名、<code>{chat}</code> 来源、<code>{id}</code> 消息 ID。
+      想按媒体库惯例归档可写 <code>电影/{filename}</code>（视频）、<code>书库/{filename}</code>（文档）。<br>
+      <b>文档后缀白名单：</b>只有命中白名单的文档才会下载（默认 <code>.txt,.epub,.pdf,.mobi,.azw3</code>）；
+      字幕/封面等附属文件（<code>.srt</code> <code>.ass</code> <code>.vtt</code> <code>.jpg</code> <code>.png</code> <code>.nfo</code>）<b>永远不下</b>。
+    </div>
+    <div class="inline" style="margin-bottom:16px">
+      <label class="sw"><input type="checkbox" id="notifyProgress"><span>视频在收藏夹回报下载进度</span></label>
+      <label class="sw"><input type="checkbox" id="resumeEnabled"><span>断点续传（中断后继续）</span></label>
+    </div>
+    <div class="inline" style="margin-bottom:16px">
+      <label class="sw"><input type="checkbox" id="notifyDocs"><span>文档完成后在收藏夹回报</span></label>
+      <label class="sw"><input type="checkbox" id="notifyDocProgress"><span>文档也回报下载进度（小文件建议关闭）</span></label>
+    </div>
+    <div class="inline">
+      <button id="btnSaveDownload" class="primary">保存设置</button>
+      <button id="btnToggleMonitor" class="ghost">开启收藏夹监听</button>
+    </div>
+    <div class="msg" id="msgDl"></div>
+  </div>
+
+  <div class="card" id="sec-tasks">
+    <h2><span class="idx">4</span>下载任务</h2>
+    <div class="hint">
+      转发到收藏夹的视频/文档会出现在这里。<b>转发后无需任何操作</b>，应用会自动识别并入队。
+      重复转发同一条消息<b>不会重复下载</b>（按消息 ID 去重）。
+    </div>
+
+    <div class="stats" id="taskStats">
+      <div class="stat"><div class="n" id="stTotal">0</div><div class="l">总计</div></div>
+      <div class="stat ok"><div class="n" id="stDone">0</div><div class="l">已完成</div></div>
+      <div class="stat run"><div class="n" id="stRunning">0</div><div class="l">进行中</div></div>
+      <div class="stat pend"><div class="n" id="stPending">0</div><div class="l">排队中</div></div>
+      <div class="stat bad"><div class="n" id="stFailed">0</div><div class="l">失败</div></div>
+    </div>
+
+    <div class="inline" style="margin:14px 0 4px">
+      <select id="taskFilter" style="max-width:150px">
+        <option value="">全部状态</option>
+        <option value="running">进行中</option>
+        <option value="pending">排队中</option>
+        <option value="done">已完成</option>
+        <option value="failed">失败</option>
+        <option value="skipped">已跳过</option>
+      </select>
+      <button id="btnRefreshTasks" class="ghost">刷新</button>
+      <button id="btnRetryAll" class="ghost">重试全部失败</button>
+      <button id="btnClearDone" class="ghost">清空已完成</button>
+    </div>
+
+    <div id="taskList" class="tasks"></div>
+    <div class="msg" id="msgTasks"></div>
+  </div>
+
+  <div class="card" id="sec-logs">
+    <h2><span class="idx">≡</span>运行日志</h2>
+    <div class="hint">排障用。只显示最近若干行，<b>不会包含任何机密</b>（密钥与节点链接已过滤）。</div>
+    <div class="inline" style="margin-bottom:12px">
+      <select id="logSource" style="max-width:200px">
+        <option value="app">应用日志</option>
+        <option value="xray">xray 输出</option>
+      </select>
+      <select id="logLines" style="max-width:120px">
+        <option value="100">最近 100 行</option>
+        <option value="300" selected>最近 300 行</option>
+        <option value="1000">最近 1000 行</option>
+      </select>
+      <button id="btnLoadLog" class="ghost">加载</button>
+    </div>
+    <pre id="logView" class="logview">（点「加载」查看）</pre>
+  </div>
+
+  <footer>tg-video-dl · fnOS 原生应用 · 仅用于下载你有权获取的内容</footer>
+</div>
+
+<script>
+// 网关前缀从当前路径推导：应用在 /app/tg-video-dl/ 下运行，
+// 本地开发（根路径）时也能工作。
+const GW = (() => {
+  const p = location.pathname;
+  const i = p.indexOf('/app/tg-video-dl');
+  return i >= 0 ? p.slice(0, i + '/app/tg-video-dl'.length) : '';
+})();
+const API = GW + '/api';
+
+const $ = id => document.getElementById(id);
+const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+function show(id, kind, html) {
+  const box = $(id);
+  box.className = 'msg show ' + kind;
+  box.innerHTML = html;
+}
+function hide(id) { $(id).className = 'msg'; }
+
+async function req(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { data = { ok: false, error: 'HTTP ' + res.status }; }
+  return { status: res.status, data };
+}
+
+// ---------- 主题 ----------
+(function theme() {
+  const saved = localStorage.getItem('tgvdl-theme') || 'auto';
+  const apply = t => {
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    document.querySelectorAll('[data-theme-set]').forEach(b => b.classList.toggle('on', b.dataset.themeSet === t));
+  };
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.onclick = () => {
+    localStorage.setItem('tgvdl-theme', b.dataset.themeSet); apply(b.dataset.themeSet);
+  });
+  apply(saved);
+})();
+
+// ---------- 状态 ----------
+let state = { statusBusy: false };  // statusBusy=true 时 refresh 不覆盖 msgStatus
+
+function pill(id, ok, text) {
+  const p = $(id);
+  p.className = 'pill ' + (ok === true ? 'on' : ok === false ? 'err' : '');
+  p.lastChild.textContent = text;
+}
+
+function renderStatus(h) {
+  const kv = $('statusKv');
+  kv.innerHTML = '';
+  const rows = [
+    ['服务版本', h.version || '-'],
+    ['xray 二进制', h.xray_binary ? '已就位' : '缺失（需构建前拉取）'],
+    ['出网方式', (h.proxy && h.proxy.mode === 'direct') ? '直连' : 'v2ray（内置 xray）'],
+    ['代理状态', h.proxy && h.proxy.running ? '运行中 · ' + (h.proxy.socks || '') : (h.proxy && h.proxy.error ? '未就绪：' + h.proxy.error : '未启动')],
+    ['节点', (h.proxy && h.proxy.endpoint) || '-'],
+    ['账号配置', h.tg_configured ? '已填 api_id/api_hash' : '未配置'],
+    ['登录状态', h.tg_authorized ? '已登录' : '未登录'],
+    ['session 加密', h.encryption_enabled ? 'AES-GCM 已启用' : '未启用（明文 + 600 权限）'],
+    ['telethon', h.telethon_available ? '已安装' : '未安装'],
+  ];
+  for (const [k, v] of rows) { kv.appendChild(el('dt', null, k)); kv.appendChild(el('dd', null, v)); }
+
+  pill('pillProxy', !!(h.proxy && h.proxy.running), (h.proxy && h.proxy.running) ? '代理已就绪' : '代理未就绪');
+  pill('pillTg', !!h.tg_authorized, h.tg_authorized ? 'TG 已登录' : 'TG 未登录');
+
+  // 登录步骤高亮
+  const st = (h.tg || {}).stage || 'idle';
+  $('step1').className = 'step' + (h.tg_configured ? ' done' : ' on');
+  $('step2').className = 'step' + (st === 'code_sent' || st === 'need_password' ? ' on' : (h.tg_authorized ? ' done' : ''));
+  $('step3').className = 'step' + (h.tg_authorized ? ' done' : '');
+  $('codeBox').classList.toggle('hide', !(st === 'code_sent' || st === 'need_password'));
+  $('pwdField').classList.toggle('hide', st !== 'need_password');
+
+  if (st === 'need_password') show('msgTg', 'warn', '该账号开启了两步验证，请填写 2FA 密码后提交。');
+
+  // ⚠️ last_error 只作为「初始/无操作时」的兜底提示。
+  // 它来自启动时的历史状态，若每次 refresh（10s）都写进 msgStatus，
+  // 会把用户刚点出来的「连通性测试结果」冲掉——用户以为按钮没反应。
+  if (h.last_error && !state.statusBusy) {
+    const box = $('msgStatus');
+    if (!box.classList.contains('show')) {
+      show('msgStatus', 'warn', '最近一次错误：' + h.last_error);
+    }
+  }
+  // 摘要行：一行看关键状态（代理 + 登录 + 加密）
+  const one = $('statusOne');
+  const proxyOk = !!(h.proxy && h.proxy.running);
+  const tgOk = !!h.tg_authorized;
+  const parts = [];
+  parts.push(proxyOk ? '🟢 代理就绪' : '🔴 代理未就绪');
+  parts.push(tgOk ? '🟢 已登录' : '⚪ 未登录');
+  parts.push(h.encryption_enabled ? '🔒 加密' : '⚠️ 未加密');
+  if(h.version) parts.push('v'+h.version);
+  one.textContent = parts.join('　·　');
+  return h;
+}
+
+function renderConfig(c) {
+  if (!c) return;
+  $('proxyNetwork').value = (c.proxy && c.proxy.network) || 'v2ray';
+  $('socksPort').value = (c.proxy && c.proxy.socks_port) || '';
+  $('phone').value = (c.telegram && c.telegram.phone) || '';
+  $('downloadDir').value = (c.download && c.download.dir) || '';
+  $('pathTemplate').value = (c.download && c.download.path_template) || '';
+  $('docDir').value = (c.download && c.download.doc_dir) || '';
+  $('docPathTemplate').value = (c.download && c.download.doc_path_template) || '';
+  $('docExts').value = (c.download && c.download.doc_exts) || '';
+  $('maxConcurrent').value = (c.download && c.download.max_concurrent) || '';
+  $('diskMinFree').value = (c.behavior && c.behavior.disk_min_free_gb) || '';
+
+  const s = c.secrets_state || {};
+  const t = s.telegram || {}, p = s.proxy || {};
+  toggleSet('apiIdSet', t.api_id_set); toggleSet('apiHashSet', t.api_hash_set);
+  toggleSet('uriSet', p.v2ray_uri_set);
+
+  $('notifyProgress').checked = !(c.behavior && c.behavior.notify_progress === false);
+  $('resumeEnabled').checked = !(c.behavior && c.behavior.resume === false);
+  $('notifyDocs').checked = !(c.behavior && c.behavior.notify_docs === false);
+  $('notifyDocProgress').checked = !!(c.behavior && c.behavior.notify_doc_progress === true);
+
+  const enabled = !!(c.behavior && c.behavior.enabled);
+  $('btnToggleMonitor').textContent = enabled ? '关闭收藏夹监听' : '开启收藏夹监听';
+  $('btnToggleMonitor').className = enabled ? 'ghost' : 'primary';
+}
+function toggleSet(id, on) { $(id).classList.toggle('hide', !on); }
+
+async function refresh() {
+  const st = await req('/health');
+  if (st.data && st.data.ok) renderStatus(st.data);
+  else { show('msgStatus', 'err', '无法读取服务状态：' + (st.data.error || st.status)); }
+  const cf = await req('/config');
+  if (cf.data && cf.data.ok) { state.config = cf.data.config; renderConfig(cf.data.config); }
+  const dc = await req('/download/check-dir', {method:'POST', body:{}});
+  if(dc.data && dc.data.ok){ renderDirReport(dc.data.result); handleDirFail(dc.data.result); }
+  await loadTasks();
+  const tg = await req('/tg/status');
+  if (tg.data && tg.data.ok) {
+    state.tg = tg.data;
+    if (tg.data.account) show('msgTg', 'ok', '已登录：' + (tg.data.account.username ? '@' + tg.data.account.username : tg.data.account.first_name) +
+      '（' + tg.data.account.phone_masked + '）');
+  }
+}
+
+// ---------- 校验 ----------
+$('btnValidate').onclick = async () => {
+  const uri = $('v2rayUri').value.trim();
+  if (!uri) return show('msgProxy', 'warn', '请先粘贴分享链接再校验。');
+  const { data } = await req('/config/validate', { method: 'POST', body: { v2ray_uri: uri, path_template: $('pathTemplate').value } });
+  const box = $('proxyChecks'); box.innerHTML = '';
+  for (const c of (data.checks || [])) {
+    const d = el('div', 'check ' + (c.ok ? 'y' : 'n'));
+    d.appendChild(el('span', 'ic', c.ok ? '✓' : '✗'));
+    d.appendChild(el('span', null, c.name + '：' + c.detail));
+    box.appendChild(d);
+  }
+  show('msgProxy', data.ok ? 'ok' : 'err', data.ok ? '链接合法，可以保存。' : '链接有问题，请按上面提示修正。');
+};
+
+// ---------- 保存代理 ----------
+$('btnSaveProxy').onclick = async () => {
+  const uri = $('v2rayUri').value.trim();
+  const body = {
+    config: {
+      proxy: {
+        network: $('proxyNetwork').value,
+        socks_port: parseInt($('socksPort').value) || 10808,
+      }
+    },
+  };
+  if (uri) body.secrets = { proxy: { v2ray_uri: uri } };
+  const btn = $('btnSaveProxy'); btn.disabled = true;
+  const { data } = await req('/config', { method: 'POST', body });
+  btn.disabled = false;
+  if (!data.ok) return show('msgProxy', 'err', data.error || '保存失败');
+  $('v2rayUri').value = '';
+  const p = data.proxy || {};
+  if (p.running) show('msgProxy', 'ok', '代理已启动：' + p.socks + '（节点 ' + p.endpoint + '）');
+  else if (p.error) show('msgProxy', 'warn', '配置已保存，但代理未就绪：' + p.error);
+  else show('msgProxy', 'ok', '配置已保存。');
+  refresh();
+};
+
+// ---------- 保存凭据 ----------
+$('btnSaveCreds').onclick = async () => {
+  const apiId = $('apiId').value.trim(), apiHash = $('apiHash').value.trim();
+  if (!apiId && !apiHash) return show('msgTg', 'warn', 'api_id 与 api_hash 至少填一项（留空表示不修改）。');
+  const { data } = await req('/config', { method: 'POST', body: { secrets: { telegram: { api_id: apiId, api_hash: apiHash } } } });
+  if (!data.ok) return show('msgTg', 'err', data.error || '保存失败');
+  $('apiId').value = ''; $('apiHash').value = '';
+  show('msgTg', 'ok', '凭据已加密保存。现在可以发送验证码了。');
+  refresh();
+};
+
+// ---------- 发送验证码 ----------
+$('btnSendCode').onclick = async () => {
+  const phone = $('phone').value.trim();
+  if (!phone) return show('msgTg', 'warn', '请填写手机号（带国际区号，如 +8613800138000）。');
+  const btn = $('btnSendCode'); btn.disabled = true;
+  const { data } = await req('/tg/login/send_code', { method: 'POST', body: { phone } });
+  btn.disabled = false;
+  if (!data.ok) {
+    show('msgTg', data.need_config ? 'warn' : 'err', data.error);
+    return refresh();
+  }
+  show('msgTg', 'ok', '验证码已发送到 ' + phone + '，请在 Telegram 内查看并填入下方。');
+  refresh();
+};
+
+// ---------- 提交验证码 ----------
+$('btnVerify').onclick = async () => {
+  const code = $('code').value.trim(), password = $('password').value;
+  if (!code) return show('msgTg', 'warn', '请填写验证码。');
+  const btn = $('btnVerify'); btn.disabled = true;
+  const { data } = await req('/tg/login/verify', { method: 'POST', body: { code, password } });
+  btn.disabled = false;
+  if (!data.ok) return show('msgTg', 'err', data.error), refresh();
+  if (data.authorized) {
+    $('code').value = ''; $('password').value = '';
+    show('msgTg', 'ok', '登录成功，session 已加密保存。现在可以开启收藏夹监听了。');
+  }
+  refresh();
+};
+
+$('btnResend').onclick = () => $('btnSendCode').click();
+
+// ---------- 退出登录 ----------
+$('btnLogout').onclick = async () => {
+  if (!confirm('确定退出登录？这会吊销本应用对账号的授权并清除本地 session。')) return;
+  const { data } = await req('/tg/logout', { method: 'POST' });
+  show('msgTg', data.ok ? 'ok' : 'err', data.ok ? '已退出登录，session 已清除。' : (data.error || '退出失败'));
+  refresh();
+};
+
+// ---------- 下载设置 ----------
+$('btnSaveDownload').onclick = async () => {
+  const { data } = await req('/config', {
+    method: 'POST',
+    body: {
+      config: {
+        download: {
+          dir: $('downloadDir').value.trim(),
+          path_template: $('pathTemplate').value.trim() || '{date}/{filename}',
+          max_concurrent: parseInt($('maxConcurrent').value) || 1,
+          doc_dir: $('docDir').value.trim(),
+          doc_path_template: $('docPathTemplate').value.trim() || '{filename}',
+          doc_exts: $('docExts').value.trim(),
+        },
+        behavior: {
+          disk_min_free_gb: parseFloat($('diskMinFree').value) || 5,
+          notify_progress: $('notifyProgress').checked,
+          resume: $('resumeEnabled').checked,
+          notify_docs: $('notifyDocs').checked,
+          notify_doc_progress: $('notifyDocProgress').checked,
+        },
+      }
+    }
+  });
+  if(!data.ok){
+    // 未授权目录等：把原因原样展示（含操作指引），不留"静默失败"
+    show('msgDl', 'err', data.error || '保存失败');
+    return;
+  }
+  show('msgDl', 'ok', '下载设置已保存（立即生效）。');
+  refresh();
+};
+
+$('btnToggleMonitor').onclick = async () => {
+  const enabled = !(state.config && state.config.behavior && state.config.behavior.enabled);
+  const { data } = await req('/monitor/toggle', { method: 'POST', body: { enabled } });
+  if (!data.ok) return show('msgDl', 'err', data.error || '操作失败');
+  show('msgDl', 'ok', enabled ? '收藏夹监听已开启：现在转发视频到收藏夹即可自动下载。' : '收藏夹监听已关闭。');
+  refresh();
+};
+
+// ---------- 连通性测试 ----------
+$('btnTestProxy').onclick = async () => {
+  const btn = $('btnTestProxy'); btn.disabled = true;
+  state.statusBusy = true;      // 期间 refresh 不得覆盖本结果
+  show('msgStatus', 'info', '正在经当前出站访问 api.telegram.org …（最长 20 秒）');
+  const { data } = await req('/proxy/test', { method: 'POST', body: { timeout: 15 } });
+  btn.disabled = false;
+  show('msgStatus', data.ok ? 'ok' : 'err', (data.detail || data.error || '') +
+    (data.ok ? '' : '<br><span style="opacity:.85">若提示代理未配置，请先完成上方第 1 步。</span>'));
+};
+
+// ---------- 目录预检 ----------
+// 视频目录：只报告"能不能写"（fnOS 授权可能只体现在组/ACL，env 为空也能写，不妄下判断）。
+// 文档目录：额外要求"必须落在系统授权目录内"，未授权会被后端明确拒绝（need_auth）。
+function renderDirReport(r, reportId){
+  const box = $(reportId || 'dirReport');
+  box.className = 'dirrep ' + (r.ok ? 'ok' : 'bad');
+  const bits = [];
+  if(r.ok){
+    bits.push('✓ 可写');
+    if(r.free_gb != null) bits.push(`剩余 ${r.free_gb} GB / 共 ${r.total_gb} GB`);
+    if(r.created) bits.push('已自动创建');
+    if(r.authorized) bits.push('✓ 在系统授权目录内');
+    box.textContent = bits.join('　·　');
+  } else {
+    box.textContent = '✗ ' + (r.error || '目录不可用');
+  }
+}
+function handleDirFail(r, actionsId, forDoc){
+  const box = $(actionsId || 'dirActions');
+  if(r.ok){ box.classList.add('hide'); return; }
+  box.classList.remove('hide');
+  // 授权由用户在 fnOS 设置里勾选，系统通过 TRIM_DATA_ACCESSIBLE_PATHS 告知应用。
+  // 不是应用能"申请"的，故这里给操作指引而不是按钮。
+  const auth = r.authorized_paths && r.authorized_paths.length
+    ? r.authorized_paths.map(x=>`<code>${esc(x)}</code>`).join('、')
+    : '（无 —— 尚未在系统设置为本应用授权任何目录）';
+  box.innerHTML =
+    (forDoc ? '<b>文档目录必须落在系统授权目录内</b>（保存时会被校验，未授权直接拒绝）。<br>' : '') +
+    '<b>如何让它可写：</b><br>' +
+    '① 到 fnOS <b>设置 → 应用 → TG 视频下载</b>，为它添加可访问的目录；<br>' +
+    '② 回到应用中心<b>停止再启动</b>本应用（授权在启动时注入）；<br>' +
+    (forDoc ? '③ 或把「文档落盘目录」留空 —— 文档就落到视频目录（无需额外授权）。<br>'
+            : '③ 或直接把落盘目录改成应用私有目录，立刻可用。<br>') +
+    `<span style="opacity:.75">当前系统已授权：${auth}</span>`;
+}
+async function checkDir(inputId, reportId, actionsId, requireAuth){
+  const dir = $(inputId).value.trim();
+  if(!dir){
+    renderDirReport({ok:false, error:'目录为空'}, reportId);
+    handleDirFail({ok:false, authorized_paths:[]}, actionsId, requireAuth);
+    return;
+  }
+  const {data} = await req('/download/check-dir', {
+    method:'POST', body:{dir, create:true, require_auth: !!requireAuth},
+  });
+  if(data.ok){ renderDirReport(data.result, reportId); handleDirFail(data.result, actionsId, requireAuth); }
+  else { $(reportId).className = 'dirrep bad'; $(reportId).textContent = '✗ ' + (data.error||'检查失败'); }
+}
+$('btnCheckDir').onclick = () => checkDir('downloadDir','dirReport','dirActions', false);
+$('btnCheckDocDir').onclick = () => checkDir('docDir','docDirReport','docDirActions', true);
+
+// ---------- 任务列表 ----------
+const STATE_TEXT = {done:'已完成', failed:'失败', running:'下载中', pending:'排队中', skipped:'已跳过'};
+// 媒体类型（任务库里 kind 列；老记录为空 → 按落盘路径/后缀兜底推断）
+const KIND_TEXT = {video:'视频', document:'文档'};
+function kindOf(t){
+  if(t.kind && KIND_TEXT[t.kind]) return t.kind;
+  const p = t.target_path || '';
+  if(/\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mpg|mpeg|rmvb|3gp|vob)$/i.test(p)) return 'video';
+  if(/\.(txt|epub|pdf|mobi|azw3)$/i.test(p)) return 'document';
+  return '';
+}
+
+function fmtSize(n){
+  if(!n) return '-';
+  const u=['B','KB','MB','GB','TB']; let i=0, v=n;
+  while(v>=1024 && i<u.length-1){v/=1024;i++;}
+  return (i===0? v.toFixed(0): v.toFixed(1))+' '+u[i];
+}
+function fmtTime(ts){
+  if(!ts) return '-';
+  const d=new Date(ts*1000), p=x=>String(x).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function esc(t){const d=document.createElement('div');d.textContent=t==null?'':t;return d.innerHTML;}
+
+function renderTasks(data){
+  const stats = data.stats || {};
+  $('stTotal').textContent   = stats.total   || 0;
+  $('stDone').textContent    = stats.done    || 0;
+  $('stRunning').textContent = stats.running || 0;
+  $('stPending').textContent = stats.pending || 0;
+  $('stFailed').textContent  = stats.failed  || 0;
+
+  // 导航徽标：进行中 + 失败（提醒用户有任务在跑或需要处理）
+  const badge = $('nbTaskBadge');
+  const urgent = (stats.running||0) + (stats.failed||0);
+  if(urgent > 0){
+    badge.textContent = urgent;
+    badge.classList.remove('hide');
+    badge.classList.toggle('warn', (stats.failed||0) > 0);
+  } else {
+    badge.classList.add('hide');
+  }
+
+  const box = $('taskList');
+  box.innerHTML = '';
+  const list = data.tasks || [];
+  if(!list.length){
+    box.appendChild(el('div','empty','暂无任务。把视频或电子书文档转发到你的收藏夹即可自动入队。'));
+    return;
+  }
+  for(const t of list){
+    const d = el('div','task');
+    const top = el('div','top');
+    const st = t.state || 'pending';
+    const tag = el('span','tag '+st, STATE_TEXT[st] || st);
+    top.appendChild(tag);
+    const kd = kindOf(t);
+    if(kd) top.appendChild(el('span','kind '+kd, KIND_TEXT[kd]));
+    top.appendChild(el('span','name', t.filename || '(未命名)'));
+    // 失败 & 跳过可重试
+    if(st==='failed' || st==='skipped'){
+      const rb = el('button', null, '重试');
+      rb.style.padding='4px 10px'; rb.style.fontSize='12px';
+      rb.onclick = async ev => {
+        ev.target.disabled = true;
+        const r = await req(`/tasks/${t.id}/retry`, {method:'POST'});
+        if(!r.data.ok) show('msgTasks','err', r.data.error || '重试失败');
+        else show('msgTasks','ok', `已重新入队：${t.filename}`);
+        loadTasks();
+      };
+      top.appendChild(rb);
+    }
+    d.appendChild(top);
+
+    if(st==='running' && t.size){
+      const bar = el('div','bar'); const i = el('i');
+      i.style.width = Math.round((t.progress||0)*100)+'%';
+      bar.appendChild(i); d.appendChild(bar);
+    }
+    const meta = el('div','meta');
+    meta.appendChild(el('span', null, fmtSize(t.size)));
+    if(st==='running' && t.size) meta.appendChild(el('span', null, Math.round((t.progress||0)*100)+'%'));
+    if(t.attempts) meta.appendChild(el('span', null, `尝试 ${t.attempts} 次`));
+    meta.appendChild(el('span', null, fmtTime(t.created_at)));
+    d.appendChild(meta);
+
+    if(t.target_path){
+      const mp = el('div','meta');
+      const c = el('code', null, t.target_path); mp.appendChild(c); d.appendChild(mp);
+    }
+    if(t.error){
+      const e2 = el('div','err', '⚠ ' + t.error); d.appendChild(e2);
+    }
+    box.appendChild(d);
+  }
+}
+
+async function loadTasks(){
+  const f = $('taskFilter').value;
+  const {data} = await req('/tasks' + (f ? '?state='+encodeURIComponent(f) : ''));
+  if(!data.ok){
+    // 任务库未初始化等：静默展示空态即可，不打扰
+    renderTasks({tasks:[], stats:{}});
+    return;
+  }
+  renderTasks(data);
+}
+
+$('btnRefreshTasks').onclick = loadTasks;
+$('taskFilter').onchange = loadTasks;
+
+$('btnClearDone').onclick = async () => {
+  if(!confirm('清空已完成的任务记录？（不会删除已下载的文件）')) return;
+  const {data} = await req('/tasks/clear', {method:'POST', body:{state:'done'}});
+  show('msgTasks', data.ok ? 'ok':'err', data.ok ? `已清理 ${data.deleted} 条记录。` : (data.error||'失败'));
+  loadTasks();
+};
+
+$('btnRetryAll').onclick = async () => {
+  const {data} = await req('/tasks?state=failed');
+  const list = (data.tasks || []);
+  if(!list.length) return show('msgTasks','warn','没有失败的任务。');
+  let n = 0;
+  for(const t of list){
+    const r = await req(`/tasks/${t.id}/retry`, {method:'POST'});
+    if(r.data.ok) n++;
+  }
+  show('msgTasks','ok', `已重新入队 ${n} 个失败任务。`);
+  loadTasks();
+};
+
+// ---------- 日志 ----------
+$('btnLoadLog').onclick = async () => {
+  const src = $('logSource').value, n = $('logLines').value;
+  $('logView').textContent = '加载中…';
+  const {data} = await req(`/logs?source=${src}&lines=${n}`);
+  if(!data.ok){
+    $('logView').textContent = '读取失败：' + (data.error || '未知错误');
+    return;
+  }
+  $('logView').textContent = (data.lines || []).join('\n') || '（日志为空）';
+  $('logView').scrollTop = $('logView').scrollHeight;
+};
+
+$('btnRefresh').onclick = () => { state.statusBusy = false; hide('msgStatus'); refresh(); };
+
+// ---------- 状态卡折叠 ----------
+(function statusFold(){
+  const hd = $('statusHd'), body = $('statusBody'), chev = $('statusChev');
+  const saved = localStorage.getItem('tgvdl-status-open');
+  const setOpen = (open) => {
+    hd.classList.toggle('open', open);
+    chev.textContent = open ? '▾' : '▸';
+    localStorage.setItem('tgvdl-status-open', open ? '1' : '0');
+  };
+  // 默认折叠（细节大多静态，不必常驻）
+  setOpen(saved === '1');
+  hd.onclick = () => setOpen(!hd.classList.contains('open'));
+})();
+
+// ---------- 导航滚动高亮 ----------
+(function scrollSpy(){
+  const links = Array.from(document.querySelectorAll('.nb'));
+  const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+  const onScroll = () => {
+    const y = window.scrollY + 90;  // 顶栏 + 导航栏高度
+    let cur = secs[0];
+    for(let i=0;i<secs.length;i++){
+      if(secs[i] && secs[i].offsetTop <= y) cur = secs[i];
+    }
+    links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#'+cur.id));
+  };
+  window.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+})();
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

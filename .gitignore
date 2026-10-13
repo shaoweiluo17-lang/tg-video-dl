@@ -1,0 +1,42 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ---- 本地配置与机密（绝不入库）----
+*.secrets.yaml
+*.secrets.yml
+deploy/fpk/app/config/
+config.yaml
+.env
+
+# ---- 变更记录：仅本地/私有库保留，不随公开仓推送 ----
+changes/
+
+# ---- 内部开发文档：仅本地/私有库保留，不随公开仓推送 ----
+docs/DIAGNOSIS-my-telegram-error.md
+docs/FEASIBILITY.md
+docs/HANDOFF.md
+docs/IMPLEMENTATION-PLAN.md
+docs/TECH-RESEARCH.md
+
+# ---- 运行期产物 ----
+*.log
+*.session
+*.session-journal
+*.part
+downloads/
+data/
+
+# ---- xray 二进制（37MB，构建前由 scripts/fetch_xray.py 拉取）----
+deploy/fpk/app/bin/
+deploy/fpk/*.fpk
+
+# ---- 编辑器/系统 ----
+.DS_Store
+.idea/
+.vscode/

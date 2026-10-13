@@ -1,0 +1,5 @@
+#!/bin/bash
+# 安装应用文件前的钩子（fnpack 构建必需）。
+# 本应用无需安装前准备：venv 初始化在 cmd/main start 内幂等完成，数据目录由 TRIM_PKGVAR 提供。
+# 保持幂等：直接成功返回。
+exit 0

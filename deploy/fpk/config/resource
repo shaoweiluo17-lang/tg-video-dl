@@ -1,0 +1,18 @@
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "tg-video-dl",
+        "permission": {
+          "rw": [
+            "tg-video-dl"
+          ]
+        }
+      }
+    ]
+  },
+  "api-scope": [
+    "trim.file.path",
+    "trim.system.getPlatformConfig"
+  ]
+}

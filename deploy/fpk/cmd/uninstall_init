@@ -1,0 +1,10 @@
+#!/bin/bash
+# uninstall_init 钩子（fnpack 标准生命周期）。
+# 卸载前停掉服务与 xray 子进程，避免残留进程占用 socket/端口。
+# 注意：$TRIM_PKGVAR 由系统在卸载时清理，这里不主动删数据（保留用户下载与配置以便重装恢复）。
+APPDEST="${TRIM_APPDEST:-}"
+if [ -n "$APPDEST" ] && [ -f "$APPDEST/cmd/main" ]; then
+  "$APPDEST/cmd/main" stop >/dev/null 2>&1 || true
+fi
+pkill -u "$(id -un)" -f "tgvdl_xray_" 2>/dev/null || true
+exit 0

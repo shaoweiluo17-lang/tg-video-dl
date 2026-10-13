@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "tg-video-dl.main": {
+      "title": "TG 视频下载",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/tg-video-dl",
+      "gatewaySocket": "app.sock",
+      "url": "/app/tg-video-dl/",
+      "allUsers": true
+    }
+  }
+}

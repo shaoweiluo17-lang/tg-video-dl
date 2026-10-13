@@ -1,0 +1,11 @@
+[
+  {
+    "stepTitle": "安装说明",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "安装完成后，请在桌面打开「TG 视频下载」应用。使用前需在配置页完成两件事：① 填写 api_id / api_hash（在 my.telegram.org 免费申请）并登录你的 Telegram 账号；② 填写 v2ray 节点链接（本机无法直连 Telegram，代理为必需项）。完成后，把想下载的视频转发到自己的「收藏夹」，应用会自动下载到指定目录。"
+      }
+    ]
+  }
+]

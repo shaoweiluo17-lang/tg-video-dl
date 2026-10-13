@@ -1,0 +1,30 @@
+# tg-video-dl server 运行时依赖（安装进应用专用 venv）
+# 基座 Python 由 manifest install_dep_apps=python312 提供。
+#
+# ⚠️ 本清单必须与 deploy/fpk/cmd/main 的 venv_ok() 关键依赖检查保持一致，
+#    否则会出现「venv 判定就绪但实际缺包」的真机故障（fn-crypto-trader 曾踩过）。
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# telethon：唯一的下载手段。Bot API getFile 硬限 20MB，TG 视频基本都超，
+# 只有 MTProto 用户号能到 2GB。这是本项目的架构基石，不是可选项。
+telethon>=1.36
+# telethon 的 socks5 支持（走内置 xray 出口）
+python-socks[asyncio]>=2.4
+# telethon 加密加速（AES-NI），大文件下载提速明显
+cryptg>=0.4
+
+# 直链兜底下载 + 代理连通性自检。
+#
+# ⚠️ httpx 走 socks5 必须额外装 socksio，否则运行期抛 ImportError：
+#   "Using SOCKS proxy, but the 'socksio' package is not installed."
+# 这个错误**不是网络问题**，但表现为"连不上代理"，极难从现象反推，
+# 已在真机踩到（代理明明可用，连通性测试却 0.04s 失败）。
+# httpx[socks] 会把 socksio 一起装上。
+httpx[socks]>=0.27
+
+# 配置读写（config.yaml / .secrets.yaml）
+PyYAML>=6.0
+# 机密（TG session、v2ray 链接）AES-GCM 加密
+cryptography>=42

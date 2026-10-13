@@ -1,0 +1,12 @@
+#!/bin/bash
+# upgrade_init 钩子（fnpack 标准生命周期）。
+# ⚠️ 已知：install-fpk 对**同版本号**的同名应用是「假升级」（no-op 且不覆盖 cmd/）。
+#   - 交付前必须把版本号 +1（三处同步），此时应用中心「手动安装」可直接覆盖安装，无需卸载；
+#   - 只有同版本号重装才必须走 stop → uninstall → install。
+# 此处仅停服务与残留 xray，保证文件不被占用。
+APPDEST="${TRIM_APPDEST:-}"
+if [ -n "$APPDEST" ] && [ -f "$APPDEST/cmd/main" ]; then
+  "$APPDEST/cmd/main" stop >/dev/null 2>&1 || true
+fi
+pkill -u "$(id -un)" -f "tgvdl_xray_" 2>/dev/null || true
+exit 0

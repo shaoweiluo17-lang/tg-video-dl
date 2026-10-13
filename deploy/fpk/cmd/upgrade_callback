@@ -1,0 +1,4 @@
+#!/bin/bash
+# upgrade_callback 钩子（fnpack 标准生命周期）。
+# 升级后不自动拉起服务：由应用中心/用户显式 start，避免升级中途起服务读到半套文件。
+exit 0

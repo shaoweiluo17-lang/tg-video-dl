@@ -1,0 +1,161 @@
+#!/bin/bash
+# tg-video-dl 生命周期脚本（fnOS 统一网关运行模型）
+# 骨架复用 fn-crypto-trader cmd/main：uvicorn 绑定 Unix Socket，前端走网关同源。
+# Python 运行时：manifest install_dep_apps=python312，启动前把 /var/apps/python312/target/bin
+# 加入 PATH，再用 python312 建应用专用 venv（$TRIM_PKGVAR/venv）并装 server/requirements.txt。
+set -u
+
+APP_DIR="${TRIM_APPDEST}"
+SOCKET_FILE="${TRIM_APPDEST}/app.sock"
+PID_FILE="${TRIM_PKGVAR}/tg-video-dl.pid"
+LOG_FILE="${TRIM_PKGVAR}/tg-video-dl.log"
+
+# Python312 运行时（manifest install_dep_apps=python312 提供）。默认路径来自官方 runtime 文档约定，
+# 可用 TGV_PY312_BIN 覆盖（依赖应用安装位置变化时）。
+PY312_BIN="${TGV_PY312_BIN:-/var/apps/python312/target/bin}"
+export PATH="$PY312_BIN:$PATH"
+
+VENV_BIN="$TRIM_PKGVAR/venv/bin"
+REQ_FILE="$APP_DIR/server/requirements.txt"
+
+# 幂等初始化应用专用 venv：存在且可 import 全部关键依赖则跳过，否则创建并安装。
+# ⚠️ 关键依赖清单必须与 server/requirements.txt 保持同步——曾因清单漏项导致真机少装包。
+venv_ok() {
+  [ -x "$VENV_BIN/python" ] || return 1
+  "$VENV_BIN/python" -c "import fastapi, uvicorn, telethon, httpx, yaml, cryptography" >/dev/null 2>&1
+}
+ensure_venv() {
+  if venv_ok; then
+    return 0
+  fi
+  echo "[cmd/main] 初始化/补齐应用 venv 依赖 ..." >>"$LOG_FILE"
+  if [ ! -x "$VENV_BIN/python" ]; then
+    python3 -m venv "$TRIM_PKGVAR/venv" >>"$LOG_FILE" 2>&1 || return 1
+    "$VENV_BIN/python" -m pip install --upgrade pip >>"$LOG_FILE" 2>&1 || return 1
+  fi
+  if [ -f "$REQ_FILE" ]; then
+    "$VENV_BIN/python" -m pip install -r "$REQ_FILE" >>"$LOG_FILE" 2>&1 || return 1
+  fi
+  venv_ok
+}
+
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  pid="$(cat "$PID_FILE" 2>/dev/null)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+# 加固：等待 uvicorn 真正 bind 到 app.sock（应用就绪），最多 $2 秒。
+# 避免「进程在但 socket 未就绪」导致应用中心 status 探测失败而误判 APP_CRASH。
+wait_sock_ready() {
+  pid="$1"
+  max="$2"
+  count=0
+  while [ "$count" -lt "$max" ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 1   # 进程已退出
+    fi
+    if [ -S "$SOCKET_FILE" ]; then
+      return 0   # socket 已就绪
+    fi
+    sleep 1
+    count=$((count + 1))
+  done
+  return 1       # 超时未就绪
+}
+
+# 清理泄漏的 xray 出站子进程（进程名前缀 tgvdl_xray_，见 server/xray_outbound.py）。
+# uvicorn 被杀后其子进程会存活并占用端口，必须显式清扫。
+kill_xray() {
+  pkill -u "$(id -un)" -f "tgvdl_xray_" 2>/dev/null || true
+}
+
+start_app() {
+  # 幂等：已在跑则先清掉可能残留的 xray，再复用现有进程
+  if is_running; then
+    return 0
+  fi
+
+  if [ ! -d "$APP_DIR/server" ]; then
+    echo "缺少服务程序目录：$APP_DIR/server" > "$TRIM_TEMP_LOGFILE"
+    return 1
+  fi
+
+  mkdir -p "$TRIM_PKGVAR"
+
+  if ! ensure_venv; then
+    echo "Python 依赖初始化失败，请查看日志：$LOG_FILE" > "$TRIM_TEMP_LOGFILE"
+    return 1
+  fi
+
+  PYTHON="$VENV_BIN/python"
+
+  # 配置/数据/日志落 TRIM_PKGVAR（@appdata，升级保留），绝不放 target（升级会被覆盖）。
+  export TGV_CONFIG_DIR="${TRIM_PKGVAR}/config"
+  export TGV_DATA_DIR="${TRIM_PKGVAR}/data"
+  export TGV_LOG_DIR="${TRIM_PKGVAR}/logs"
+  export TGV_DOWNLOAD_DIR="${TRIM_PKGVAR}/downloads"
+  export TGV_TMP_DIR="${TRIM_PKGTMP:-${TRIM_PKGVAR}/tmp}"
+  mkdir -p "$TGV_CONFIG_DIR" "$TGV_DATA_DIR" "$TGV_LOG_DIR" "$TGV_DOWNLOAD_DIR" "$TGV_TMP_DIR"
+
+  # 清理陈旧实例状态
+  rm -f "$PID_FILE" "$SOCKET_FILE"
+  kill_xray
+
+  cd "$APP_DIR" || { echo "无法进入 $APP_DIR" > "$TRIM_TEMP_LOGFILE"; return 1; }
+
+  nohup "$PYTHON" -m uvicorn server.main:app \
+    --uds "$SOCKET_FILE" \
+    --host 127.0.0.1 \
+    >>"$LOG_FILE" 2>&1 &
+  pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  if ! wait_sock_ready "$pid" 30; then
+    rm -f "$PID_FILE" "$SOCKET_FILE"
+    kill_xray
+    echo "服务启动失败（$SOCKET_FILE 30s 内未就绪或进程退出），请查看日志：$LOG_FILE" > "$TRIM_TEMP_LOGFILE"
+    return 1
+  fi
+}
+
+stop_app() {
+  if ! is_running; then
+    rm -f "$PID_FILE" "$SOCKET_FILE"
+    kill_xray
+    return 0
+  fi
+  pid="$(cat "$PID_FILE")"
+  kill "$pid" 2>/dev/null || true
+  count=0
+  while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 20 ]; do
+    sleep 1
+    count=$((count + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  # uvicorn 的 xray 子进程不会随父进程退出：显式清扫
+  kill_xray
+  rm -f "$PID_FILE" "$SOCKET_FILE"
+}
+
+case "${1:-}" in
+  start)
+    start_app
+    ;;
+  stop)
+    stop_app
+    ;;
+  status)
+    if is_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    echo "用法: $0 {start|stop|status}" >&2
+    exit 1
+    ;;
+esac

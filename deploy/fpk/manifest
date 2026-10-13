@@ -1,0 +1,18 @@
+appname=tg-video-dl
+version=0.4.5
+display_name=TG 视频下载
+desc=Telegram 收藏夹转发即下载：telethon 用户号监听收藏夹，内置 xray 出网，落盘到 NAS（统一网关 + WebSocket）
+source=thirdparty
+# 内置 xray 为 x86_64 二进制（build 前 fetch_xray.py 拉取，app/bin 不入仓）。
+# ARM 包需换对应架构二进制后再调整此值（参照 fn-crypto-trader ADR-001 §3）。
+platform=x86
+maintainer=FNOSP
+maintainer_url=https://github.com/FNOSP
+os_min_version=1.2.0401
+# Python 运行时依赖（官方核心文档 runtime/：install_dep_apps=python312）
+install_dep_apps=python312
+desktop_uidir=ui
+desktop_applaunchname=tg-video-dl.main
+ctl_stop=true
+checkport=false
+micro_app=true
