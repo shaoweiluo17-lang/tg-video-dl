@@ -15,6 +15,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 from server import config  # noqa: E402
 from server import main as srv  # noqa: E402
+from server.tg_client import TgError, TgUnreachable  # noqa: E402
 
 PREFIX = "/app/tg-video-dl"
 
@@ -286,11 +287,15 @@ class TestNoHangRegression:
         assert r.status_code == 400
         assert "手机号" in r.json()["error"]
 
-    def test_send_code_unreachable_returns_504(self, client: TestClient) -> None:
-        """配置了凭据但无法连接 TG → 504（可操作提示），而不是挂死或 500。
+    def test_send_code_unreachable_returns_504(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """连不上 TG → 504（可操作提示），而不是挂死或 500。
 
-        本机（NAS）实测无法直连 Telegram，所以这个用例在真实环境里
-        走的正是「无代理」分支：preflight TCP 探测失败 → 快速 504。
+        ⚠️ 这条用例**不能靠真实网络判定「不可达」**：本机（NAS）确实直连不了
+        Telegram，但 CI runner 能直连 —— 真实探测会让同一个用例在两种环境里
+        给出不同结果（2026-10-13 CI 实测：真连上后 TG 回 api_id 无效 → 502）。
+        所以这里把网络边界 mock 掉，只验证「异常 → 状态码」的映射本身。
         """
         client.post(
             f"{PREFIX}/api/config",
@@ -299,10 +304,38 @@ class TestNoHangRegression:
         # 确保没有代理出口（默认未配置 v2ray 链接）
         assert srv.STATE.tg.proxy_url is None
 
+        async def _unreachable(*_a: object, **_k: object) -> None:
+            raise TgUnreachable(
+                "无法连接 Telegram（149.154.167.51:443 不通），且当前未启用代理，请先配置 v2ray 节点"
+            )
+
+        monkeypatch.setattr(srv.STATE.tg, "send_code", _unreachable)
+
         r = client.post(f"{PREFIX}/api/tg/login/send_code", json={"phone": "+8613800138000"})
         assert r.status_code == 504, r.text
         assert r.json()["unreachable"] is True
         assert "代理" in r.json()["error"]
+
+    def test_send_code_bad_credentials_returns_502(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """凭据错（api_id/api_hash 无效）→ 502，并提示去哪里核对。
+
+        与上一条互为对照：**同一条接口按异常类型分流**，不靠网络碰运气。
+        """
+        client.post(
+            f"{PREFIX}/api/config",
+            json={"secrets": {"telegram": {"api_id": "1234567", "api_hash": "fake-hash"}}},
+        )
+
+        async def _bad_creds(*_a: object, **_k: object) -> None:
+            raise TgError("发送验证码失败：api_id / api_hash 无效，请核对 my.telegram.org 上的值")
+
+        monkeypatch.setattr(srv.STATE.tg, "send_code", _bad_creds)
+
+        r = client.post(f"{PREFIX}/api/tg/login/send_code", json={"phone": "+8613800138000"})
+        assert r.status_code == 502, r.text
+        assert "my.telegram.org" in r.json()["error"]
 
     def test_verify_without_send_code_is_400(self, client: TestClient) -> None:
         r = client.post(f"{PREFIX}/api/tg/login/verify", json={"code": "12345"})
