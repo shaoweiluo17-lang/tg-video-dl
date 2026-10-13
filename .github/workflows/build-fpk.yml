@@ -46,17 +46,25 @@ jobs:
           set -o pipefail
           pytest -q -rf --tb=short 2>&1 | tee /tmp/pytest.log
 
-      # 排障：Actions 日志要登录才能看，失败时把结果贴成 commit comment（公开可读）
+      # 排障：Actions 日志要登录才能看，失败时把结果同时贴到 Job Summary（公开可读）
       - name: 失败时贴出 pytest 结果
         if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           BODY="$(tail -c 6000 /tmp/pytest.log 2>/dev/null || echo '无日志')"
+          {
+            echo '## pytest 失败输出'
+            echo '```'
+            echo "$BODY"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           jq -Rs '{body: ("pytest 失败输出：\n\n```\n" + . + "\n```")}' <<<"$BODY" > /tmp/comment.json
-          curl -sS -o /dev/null -w 'comment http=%{http_code}\n' -X POST \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -d @/tmp/comment.json \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments"
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" | head -c 300
 
   build-fpk:
     name: 构建 .fpk
